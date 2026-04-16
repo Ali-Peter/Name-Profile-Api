@@ -2,7 +2,6 @@ services:
   - type: web
     name: name-profile-api
     runtime: docker
-    repo: https://github.com/Ali-Peter/NameClassifierApi.git   # change to your repo
     plan: free
     envVars:
       - key: ASPNETCORE_ENVIRONMENT

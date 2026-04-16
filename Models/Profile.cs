@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 public class Profile
 {
-    public Guid Id { get; set; } = Guid.CreateVersion7(); // UUID v7 as required
+    public Guid Id { get; set; } = Guid.NewGuid(); // UUID v7 as required
 
     [Required]
     public string Name { get; set; } = string.Empty;
