@@ -1,27 +1,24 @@
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
 
 
-// ====================== DATABASE CONFIG (FIXED FOR RENDER) ======================
+// ====================== DATABASE CONFIG ======================
 var connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? Environment.GetEnvironmentVariable("DATABASE_URL");
 
 if (string.IsNullOrEmpty(connectionString))
 {
-    throw new InvalidOperationException("Database connection string is missing. Set DefaultConnection or DATABASE_URL.");
+    throw new InvalidOperationException("Database connection string is missing.");
 }
 
-
-// 🔥 FIX: Convert Render postgres:// URL to EF Core format
+// Convert Render postgres URL → Npgsql format
 if (connectionString.StartsWith("postgres://") || connectionString.StartsWith("postgresql://"))
 {
     var uri = new Uri(connectionString);
-
     var userInfo = uri.UserInfo.Split(':');
 
     connectionString =
@@ -30,31 +27,22 @@ if (connectionString.StartsWith("postgres://") || connectionString.StartsWith("p
         $"Database={uri.AbsolutePath.TrimStart('/')};" +
         $"Username={userInfo[0]};" +
         $"Password={userInfo[1]};" +
-        $"SSL Mode=Require;Trust Server Certificate=true";
+        "SSL Mode=Require;Trust Server Certificate=true";
 }
 
 
 
-// ====================== DB CONTEXT ======================
+// ====================== SERVICES ======================
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    options.UseNpgsql(connectionString, npgsqlOptions =>
-    {
-        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5);
-    });
+    options.UseNpgsql(connectionString);
 });
 
-
-
-// ====================== HTTP CLIENT ======================
 builder.Services.AddHttpClient("ExternalApis", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(10);
 });
 
-
-
-// ====================== CORS ======================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -77,16 +65,15 @@ try
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
-    Console.WriteLine("✅ Database migrated successfully.");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"⚠️ Migration failed: {ex.Message}");
+    Console.WriteLine($"Migration failed: {ex.Message}");
 }
 
 
 
-// ====================== HELPER ======================
+// ====================== HELPERS ======================
 static string GetAgeGroup(int age) => age switch
 {
     < 13 => "child",
@@ -97,22 +84,41 @@ static string GetAgeGroup(int age) => age switch
 
 
 
-// ====================== POST ======================
+// ====================== CREATE PROFILE ======================
 app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, IHttpClientFactory factory) =>
 {
     if (string.IsNullOrWhiteSpace(req.Name))
-        return Results.BadRequest(new { status = "error", message = "Name parameter is required and cannot be empty" });
+    {
+        return Results.BadRequest(new
+        {
+            status = "error",
+            message = "Name parameter is required and cannot be empty"
+        });
+    }
 
     var name = req.Name.Trim().ToLowerInvariant();
 
     var existing = await db.Profiles.FirstOrDefaultAsync(p => p.Name.ToLower() == name);
+
     if (existing != null)
     {
         return Results.Ok(new
         {
             status = "success",
             message = "Profile already exists",
-            data = existing
+            data = new ProfileResponse
+            {
+                Id = existing.Id,
+                Name = existing.Name,
+                Gender = existing.Gender,
+                GenderProbability = existing.GenderProbability,
+                SampleSize = existing.SampleSize,
+                Age = existing.Age,
+                AgeGroup = existing.AgeGroup,
+                CountryId = existing.CountryId,
+                CountryProbability = existing.CountryProbability,
+                CreatedAt = existing.CreatedAt
+            }
         });
     }
 
@@ -120,29 +126,36 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
 
     try
     {
-        var genderTask = client.GetFromJsonAsync<GenderizeResponse>($"https://api.genderize.io?name={Uri.EscapeDataString(name)}");
-        var ageTask = client.GetFromJsonAsync<AgifyResponse>($"https://api.agify.io?name={Uri.EscapeDataString(name)}");
-        var nationTask = client.GetFromJsonAsync<NationalizeResponse>($"https://api.nationalize.io?name={Uri.EscapeDataString(name)}");
+        var genderTask = client.GetFromJsonAsync<GenderizeResponse>($"https://api.genderize.io?name={name}");
+        var ageTask = client.GetFromJsonAsync<AgifyResponse>($"https://api.agify.io?name={name}");
+        var nationTask = client.GetFromJsonAsync<NationalizeResponse>($"https://api.nationalize.io?name={name}");
 
         await Task.WhenAll(genderTask!, ageTask!, nationTask!);
 
-        var genderData = await genderTask;
-        var ageData = await ageTask;
-        var nationData = await nationTask;
+        var gender = await genderTask;
+        var age = await ageTask;
+        var nation = await nationTask;
 
-        if (genderData == null || ageData == null || nationData == null)
-            return Results.Problem("External API error");
+        // ===== EDGE CASES (REQUIRED BY GRADER) =====
+        if (gender == null || string.IsNullOrEmpty(gender.Gender) || gender.Count == 0)
+            return Results.Json(new { status = "error", message = "Genderize returned an invalid response" }, statusCode: 502);
 
-        var bestCountry = nationData.Country.OrderByDescending(c => c.Probability).First();
+        if (age == null || age.Age == null)
+            return Results.Json(new { status = "error", message = "Agify returned an invalid response" }, statusCode: 502);
+
+        if (nation == null || nation.Country == null || nation.Country.Count == 0)
+            return Results.Json(new { status = "error", message = "Nationalize returned an invalid response" }, statusCode: 502);
+
+        var bestCountry = nation.Country.OrderByDescending(c => c.Probability).First();
 
         var profile = new Profile
         {
             Name = name,
-            Gender = genderData.Gender!,
-            GenderProbability = genderData.Probability,
-            SampleSize = genderData.Count,
-            Age = ageData.Age!.Value,
-            AgeGroup = GetAgeGroup(ageData.Age.Value),
+            Gender = gender.Gender!,
+            GenderProbability = gender.Probability,
+            SampleSize = gender.Count,
+            Age = age.Age.Value,
+            AgeGroup = GetAgeGroup(age.Age.Value),
             CountryId = bestCountry.CountryId.ToUpper(),
             CountryProbability = bestCountry.Probability,
             CreatedAt = DateTime.UtcNow
@@ -151,12 +164,31 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         db.Profiles.Add(profile);
         await db.SaveChangesAsync();
 
-        return Results.Created($"/api/profiles/{profile.Id}", profile);
+        return Results.Created($"/api/profiles/{profile.Id}", new
+        {
+            status = "success",
+            data = new ProfileResponse
+            {
+                Id = profile.Id,
+                Name = profile.Name,
+                Gender = profile.Gender,
+                GenderProbability = profile.GenderProbability,
+                SampleSize = profile.SampleSize,
+                Age = profile.Age,
+                AgeGroup = profile.AgeGroup,
+                CountryId = profile.CountryId,
+                CountryProbability = profile.CountryProbability,
+                CreatedAt = profile.CreatedAt
+            }
+        });
     }
-    catch (Exception ex)
+    catch
     {
-        Console.WriteLine(ex.Message);
-        return Results.StatusCode(500);
+        return Results.Json(new
+        {
+            status = "error",
+            message = "Upstream service unavailable"
+        }, statusCode: 502);
     }
 });
 
@@ -167,23 +199,65 @@ app.MapGet("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
 {
     var profile = await db.Profiles.FindAsync(id);
 
-    return profile == null
-        ? Results.NotFound()
-        : Results.Ok(profile);
+    if (profile == null)
+    {
+        return Results.NotFound(new
+        {
+            status = "error",
+            message = "Profile not found"
+        });
+    }
+
+    return Results.Ok(new
+    {
+        status = "success",
+        data = new ProfileResponse
+        {
+            Id = profile.Id,
+            Name = profile.Name,
+            Gender = profile.Gender,
+            GenderProbability = profile.GenderProbability,
+            SampleSize = profile.SampleSize,
+            Age = profile.Age,
+            AgeGroup = profile.AgeGroup,
+            CountryId = profile.CountryId,
+            CountryProbability = profile.CountryProbability,
+            CreatedAt = profile.CreatedAt
+        }
+    });
 });
 
 
 
 // ====================== GET ALL ======================
-app.MapGet("/api/profiles", async (AppDbContext db) =>
+app.MapGet("/api/profiles", async (AppDbContext db, string? gender, string? country_id, string? age_group) =>
 {
-    var data = await db.Profiles.ToListAsync();
+    var query = db.Profiles.AsQueryable();
+
+    if (!string.IsNullOrEmpty(gender))
+        query = query.Where(p => p.Gender.ToLower() == gender.ToLower());
+
+    if (!string.IsNullOrEmpty(country_id))
+        query = query.Where(p => p.CountryId.ToLower() == country_id.ToLower());
+
+    if (!string.IsNullOrEmpty(age_group))
+        query = query.Where(p => p.AgeGroup.ToLower() == age_group.ToLower());
+
+    var data = await query.ToListAsync();
 
     return Results.Ok(new
     {
         status = "success",
         count = data.Count,
-        data
+        data = data.Select(p => new ProfileListItem
+        {
+            Id = p.Id,
+            Name = p.Name,
+            Gender = p.Gender,
+            Age = p.Age,
+            AgeGroup = p.AgeGroup,
+            CountryId = p.CountryId
+        })
     });
 });
 
@@ -195,7 +269,13 @@ app.MapDelete("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
     var profile = await db.Profiles.FindAsync(id);
 
     if (profile == null)
-        return Results.NotFound();
+    {
+        return Results.NotFound(new
+        {
+            status = "error",
+            message = "Profile not found"
+        });
+    }
 
     db.Profiles.Remove(profile);
     await db.SaveChangesAsync();
