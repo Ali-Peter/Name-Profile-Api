@@ -6,7 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // === Database Configuration (Works on Render + Local) ===
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? builder.Configuration["DATABASE_URL"];   // Render sets this automatically
+    ?? builder.Configuration["DATABASE_URL"];
 
 if (string.IsNullOrEmpty(connectionString))
 {
@@ -17,7 +17,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 {
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
-        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5); // Better resilience on Render free tier
+        // Fixed for .NET 10 / newer Npgsql
+        npgsqlOptions.EnableRetryOnFailure(maxRetryCount: 5);
     });
 });
 
@@ -45,13 +46,12 @@ try
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();   // Applies migrations on startup
-    Console.WriteLine("Database migrated successfully.");
+    db.Database.Migrate();
+    Console.WriteLine("✅ Database migrated successfully.");
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"Migration failed: {ex.Message}");
-    // Don't crash the app on migration failure in production (Render logs will show it)
+    Console.WriteLine($"⚠️ Migration failed: {ex.Message}");
 }
 
 // Helper to get age group
@@ -71,7 +71,7 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
 
     var name = req.Name.Trim().ToLowerInvariant();
 
-    // Idempotency: Return existing profile if name already exists
+    // Idempotency check
     var existing = await db.Profiles.FirstOrDefaultAsync(p => p.Name.ToLower() == name);
     if (existing != null)
     {
@@ -100,24 +100,24 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
     try
     {
         var genderTask = client.GetFromJsonAsync<GenderizeResponse>($"https://api.genderize.io?name={Uri.EscapeDataString(name)}");
-        var ageTask = client.GetFromJsonAsync<AgifyResponse>($"https://api.agify.io?name={Uri.EscapeDataString(name)}");
+        var ageTask    = client.GetFromJsonAsync<AgifyResponse>($"https://api.agify.io?name={Uri.EscapeDataString(name)}");
         var nationTask = client.GetFromJsonAsync<NationalizeResponse>($"https://api.nationalize.io?name={Uri.EscapeDataString(name)}");
 
         await Task.WhenAll(genderTask, ageTask, nationTask);
 
         var genderData = await genderTask;
-        var ageData = await ageTask;
+        var ageData    = await ageTask;
         var nationData = await nationTask;
 
-        // Edge cases → Return 502 and DO NOT store
+        // Edge cases → Return 502 with body
         if (genderData == null || string.IsNullOrEmpty(genderData.Gender) || genderData.Count == 0)
-            return Results.StatusCode(502, new { status = "error", message = "Genderize returned an invalid response" });
+            return Results.Json(new { status = "error", message = "Genderize returned an invalid response" }, statusCode: 502);
 
         if (ageData == null || ageData.Age == null)
-            return Results.StatusCode(502, new { status = "error", message = "Agify returned an invalid response" });
+            return Results.Json(new { status = "error", message = "Agify returned an invalid response" }, statusCode: 502);
 
         if (nationData == null || nationData.Country.Count == 0)
-            return Results.StatusCode(502, new { status = "error", message = "Nationalize returned an invalid response" });
+            return Results.Json(new { status = "error", message = "Nationalize returned an invalid response" }, statusCode: 502);
 
         var bestCountry = nationData.Country.OrderByDescending(c => c.Probability).First();
 
@@ -155,7 +155,7 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
     }
     catch (HttpRequestException)
     {
-        return Results.StatusCode(502);
+        return Results.Json(new { status = "error", message = "Upstream service unavailable" }, statusCode: 502);
     }
     catch (Exception ex)
     {
