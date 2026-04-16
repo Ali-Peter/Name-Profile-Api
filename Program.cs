@@ -12,7 +12,7 @@ var connectionString =
 
 if (string.IsNullOrEmpty(connectionString))
 {
-    throw new InvalidOperationException("Database connection string is missing.");
+    connectionString = "Host=localhost;Database=devdb;Username=postgres;Password=postgres";
 }
 
 // Convert Render postgres URL → Npgsql format
@@ -21,9 +21,11 @@ if (connectionString.StartsWith("postgres://") || connectionString.StartsWith("p
     var uri = new Uri(connectionString);
     var userInfo = uri.UserInfo.Split(':');
 
+    var port = uri.Port <= 0 ? 5432 : uri.Port;
+
     connectionString =
         $"Host={uri.Host};" +
-        $"Port={uri.Port};" +
+        $"Port={port};" +
         $"Database={uri.AbsolutePath.TrimStart('/')};" +
         $"Username={userInfo[0]};" +
         $"Password={userInfo[1]};" +
@@ -56,21 +58,6 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 app.UseCors("AllowAll");
-
-
-
-// ====================== AUTO MIGRATION ======================
-try
-{
-    using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.Migrate();
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"Migration failed: {ex.Message}");
-}
-
 
 
 // ====================== HELPERS ======================
