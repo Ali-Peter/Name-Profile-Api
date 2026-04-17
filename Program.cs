@@ -173,13 +173,14 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
             }
         });
     }
-    catch
+    catch (Exception ex)
     {
         return Results.Json(new
         {
             status = "error",
-            message = "Upstream service unavailable"
-        }, statusCode: 502);
+            message = ex.Message,
+            stack = ex.StackTrace
+        }, statusCode: 500);
     }
 });
 
