@@ -117,11 +117,28 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
 
     var client = factory.CreateClient("ExternalApis");
 
+    async Task<T?> SafeGet<T>(HttpClient client, string url)
+    {
+        var response = await client.GetAsync(url);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            if ((int)response.StatusCode == 429)
+            {
+                throw new Exception("External API rate limit exceeded. Try again later.");
+            }
+
+            throw new Exception($"External API error: {response.StatusCode}");
+        }
+
+        return await response.Content.ReadFromJsonAsync<T>();
+    }
+
     try
     {
-        var genderTask = client.GetFromJsonAsync<GenderizeResponse>($"https://api.genderize.io?name={name}");
-        var ageTask = client.GetFromJsonAsync<AgifyResponse>($"https://api.agify.io?name={name}");
-        var nationTask = client.GetFromJsonAsync<NationalizeResponse>($"https://api.nationalize.io?name={name}");
+        var genderTask = SafeGet<GenderizeResponse>(client, $"https://api.genderize.io?name={name}");
+        var ageTask = SafeGet<AgifyResponse>(client, $"https://api.agify.io?name={name}");
+        var nationTask = SafeGet<NationalizeResponse>(client, $"https://api.nationalize.io?name={name}");
 
         await Task.WhenAll(genderTask!, ageTask!, nationTask!);
 
