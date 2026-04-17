@@ -74,12 +74,12 @@ static string GetAgeGroup(int age) => age switch
 // ====================== CREATE PROFILE ======================
 app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, IHttpClientFactory factory) =>
 {
-    if (string.IsNullOrWhiteSpace(req.Name))
+    if (req == null || string.IsNullOrWhiteSpace(req.Name))
     {
         return Results.BadRequest(new
         {
             status = "error",
-            message = "Name parameter is required and cannot be empty"
+            message = "Name is required"
         });
     }
 
