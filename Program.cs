@@ -3,8 +3,6 @@ using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
-
-
 // ====================== DATABASE CONFIG ======================
 var connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
@@ -32,8 +30,6 @@ if (connectionString.StartsWith("postgres://") || connectionString.StartsWith("p
         "SSL Mode=Require;Trust Server Certificate=true";
 }
 
-
-
 // ====================== SERVICES ======================
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
@@ -53,8 +49,6 @@ builder.Services.AddCors(options =>
               .AllowAnyHeader());
 });
 
-
-
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
@@ -65,28 +59,6 @@ using (var scope = app.Services.CreateScope())
 
 app.UseCors("AllowAll");
 
-
-app.MapPost("/seed", async (AppDbContext db) =>
-{
-    var profile = new Profile
-    {
-        Name = "ella",
-        Gender = "female",
-        GenderProbability = 0.99,
-        SampleSize = 1000,
-        Age = 25,
-        AgeGroup = "adult",
-        CountryId = "US",
-        CountryProbability = 0.8,
-        CreatedAt = DateTime.UtcNow
-    };
-
-    db.Profiles.Add(profile);
-    await db.SaveChangesAsync();
-
-    return Results.Ok(profile);
-});
-
 // ====================== HELPERS ======================
 static string GetAgeGroup(int age) => age switch
 {
@@ -95,8 +67,6 @@ static string GetAgeGroup(int age) => age switch
     < 60 => "adult",
     _ => "senior"
 };
-
-
 
 // ====================== CREATE PROFILE ======================
 app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, IHttpClientFactory factory) =>
@@ -120,18 +90,18 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         {
             status = "success",
             message = "Profile already exists",
-            data = new ProfileResponse
+            data = new
             {
-                Id = existing.Id,
-                Name = existing.Name,
-                Gender = existing.Gender,
-                GenderProbability = existing.GenderProbability,
-                SampleSize = existing.SampleSize,
-                Age = existing.Age,
-                AgeGroup = existing.AgeGroup,
-                CountryId = existing.CountryId,
-                CountryProbability = existing.CountryProbability,
-                CreatedAt = existing.CreatedAt
+                id = existing.Id,
+                name = existing.Name,
+                gender = existing.Gender,
+                gender_probability = existing.GenderProbability,
+                sample_size = existing.SampleSize,
+                age = existing.Age,
+                age_group = existing.AgeGroup,
+                country_id = existing.CountryId,
+                country_probability = existing.CountryProbability,
+                created_at = existing.CreatedAt.ToString("o")
             }
         });
     }
@@ -145,9 +115,7 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         if (!response.IsSuccessStatusCode)
         {
             if ((int)response.StatusCode == 429)
-            {
                 throw new Exception("External API rate limit exceeded. Try again later.");
-            }
 
             throw new Exception($"External API error: {response.StatusCode}");
         }
@@ -167,7 +135,6 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         var age = await ageTask;
         var nation = await nationTask;
 
-        // ===== EDGE CASES (REQUIRED BY GRADER) =====
         if (gender == null || string.IsNullOrEmpty(gender.Gender) || gender.Count == 0)
             return Results.Json(new { status = "error", message = "Genderize returned an invalid response" }, statusCode: 502);
 
@@ -198,18 +165,18 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         return Results.Created($"/api/profiles/{profile.Id}", new
         {
             status = "success",
-            data = new ProfileResponse
+            data = new
             {
-                Id = profile.Id,
-                Name = profile.Name,
-                Gender = profile.Gender,
-                GenderProbability = profile.GenderProbability,
-                SampleSize = profile.SampleSize,
-                Age = profile.Age,
-                AgeGroup = profile.AgeGroup,
-                CountryId = profile.CountryId,
-                CountryProbability = profile.CountryProbability,
-                CreatedAt = profile.CreatedAt
+                id = profile.Id,
+                name = profile.Name,
+                gender = profile.Gender,
+                gender_probability = profile.GenderProbability,
+                sample_size = profile.SampleSize,
+                age = profile.Age,
+                age_group = profile.AgeGroup,
+                country_id = profile.CountryId,
+                country_probability = profile.CountryProbability,
+                created_at = profile.CreatedAt.ToString("o")
             }
         });
     }
@@ -218,13 +185,10 @@ app.MapPost("/api/profiles", async (CreateProfileRequest req, AppDbContext db, I
         return Results.Json(new
         {
             status = "error",
-            message = ex.Message,
-            stack = ex.StackTrace
+            message = ex.Message
         }, statusCode: 500);
     }
 });
-
-
 
 // ====================== GET BY ID ======================
 app.MapGet("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
@@ -243,23 +207,21 @@ app.MapGet("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
     return Results.Ok(new
     {
         status = "success",
-        data = new ProfileResponse
+        data = new
         {
-            Id = profile.Id,
-            Name = profile.Name,
-            Gender = profile.Gender,
-            GenderProbability = profile.GenderProbability,
-            SampleSize = profile.SampleSize,
-            Age = profile.Age,
-            AgeGroup = profile.AgeGroup,
-            CountryId = profile.CountryId,
-            CountryProbability = profile.CountryProbability,
-            CreatedAt = profile.CreatedAt
+            id = profile.Id,
+            name = profile.Name,
+            gender = profile.Gender,
+            gender_probability = profile.GenderProbability,
+            sample_size = profile.SampleSize,
+            age = profile.Age,
+            age_group = profile.AgeGroup,
+            country_id = profile.CountryId,
+            country_probability = profile.CountryProbability,
+            created_at = profile.CreatedAt.ToString("o")
         }
     });
 });
-
-
 
 // ====================== GET ALL ======================
 app.MapGet("/api/profiles", async (AppDbContext db, string? gender, string? country_id, string? age_group) =>
@@ -281,19 +243,18 @@ app.MapGet("/api/profiles", async (AppDbContext db, string? gender, string? coun
     {
         status = "success",
         count = data.Count,
-        data = data.Select(p => new ProfileListItem
+        data = data.Select(p => new
         {
-            Id = p.Id,
-            Name = p.Name,
-            Gender = p.Gender,
-            Age = p.Age,
-            AgeGroup = p.AgeGroup,
-            CountryId = p.CountryId
+            id = p.Id,
+            name = p.Name,
+            gender = p.Gender,
+            age = p.Age,
+            age_group = p.AgeGroup,
+            country_id = p.CountryId,
+            created_at = p.CreatedAt.ToString("o")
         })
     });
 });
-
-
 
 // ====================== DELETE ======================
 app.MapDelete("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
@@ -314,7 +275,5 @@ app.MapDelete("/api/profiles/{id:guid}", async (Guid id, AppDbContext db) =>
 
     return Results.NoContent();
 });
-
-
 
 app.Run();
