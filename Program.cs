@@ -59,6 +59,10 @@ var app = builder.Build();
 
 app.UseCors("AllowAll");
 
+app.MapPost("/test", (CreateProfileRequest req) =>
+{
+    return Results.Ok(req);
+});
 
 // ====================== HELPERS ======================
 static string GetAgeGroup(int age) => age switch
