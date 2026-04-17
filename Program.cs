@@ -66,6 +66,27 @@ using (var scope = app.Services.CreateScope())
 app.UseCors("AllowAll");
 
 
+app.MapPost("/seed", async (AppDbContext db) =>
+{
+    var profile = new Profile
+    {
+        Name = "ella",
+        Gender = "female",
+        GenderProbability = 0.99,
+        SampleSize = 1000,
+        Age = 25,
+        AgeGroup = "adult",
+        CountryId = "US",
+        CountryProbability = 0.8,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    db.Profiles.Add(profile);
+    await db.SaveChangesAsync();
+
+    return Results.Ok(profile);
+});
+
 // ====================== HELPERS ======================
 static string GetAgeGroup(int age) => age switch
 {
